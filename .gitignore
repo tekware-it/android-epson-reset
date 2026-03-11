@@ -1,0 +1,12 @@
+.gradle/
+.idea/
+build/
+app/build/
+local.properties
+
+upstream-ez-reset/
+upstream-epson-print-conf/
+
+*.iml
+captures/
+.DS_Store
