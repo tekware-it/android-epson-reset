@@ -1,9 +1,9 @@
-package com.tekware.aereset.protocol
+package info.tekware.aereset.protocol
 
-import com.tekware.aereset.data.InkLevel
-import com.tekware.aereset.data.PrinterSpec
-import com.tekware.aereset.data.PrinterStatusSnapshot
-import com.tekware.aereset.data.WasteCounterStatus
+import info.tekware.aereset.data.InkLevel
+import info.tekware.aereset.data.PrinterSpec
+import info.tekware.aereset.data.PrinterStatusSnapshot
+import info.tekware.aereset.data.WasteCounterStatus
 import kotlin.math.min
 
 class EpsonProtocol(private val spec: PrinterSpec) {

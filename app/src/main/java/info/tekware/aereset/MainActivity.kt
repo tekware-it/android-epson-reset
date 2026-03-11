@@ -1,4 +1,4 @@
-package com.tekware.aereset
+package info.tekware.aereset
 
 import android.hardware.usb.UsbManager
 import android.os.Bundle
@@ -8,9 +8,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.tekware.aereset.ui.MainViewModel
-import com.tekware.aereset.ui.PrinterStatusScreen
-import com.tekware.aereset.ui.theme.AeResetTheme
+import info.tekware.aereset.ui.MainViewModel
+import info.tekware.aereset.ui.PrinterStatusScreen
+import info.tekware.aereset.ui.theme.AeResetTheme
 
 class MainActivity : ComponentActivity() {
     private val viewModel by viewModels<MainViewModel>()

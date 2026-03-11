@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.tekware.aereset"
+    namespace = "info.tekware.aereset"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.tekware.aereset"
+        applicationId = "info.tekware.aereset"
         minSdk = 26
         targetSdk = 34
         versionCode = 1

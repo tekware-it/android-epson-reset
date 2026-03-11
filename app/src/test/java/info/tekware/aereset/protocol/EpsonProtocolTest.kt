@@ -1,6 +1,6 @@
-package com.tekware.aereset.protocol
+package info.tekware.aereset.protocol
 
-import com.tekware.aereset.data.PrinterSpec
+import info.tekware.aereset.data.PrinterSpec
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Test

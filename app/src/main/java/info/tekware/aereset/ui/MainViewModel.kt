@@ -1,11 +1,11 @@
-package com.tekware.aereset.ui
+package info.tekware.aereset.ui
 
 import android.app.Application
 import android.hardware.usb.UsbDevice
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.tekware.aereset.data.PrinterStatusSnapshot
-import com.tekware.aereset.service.PrinterService
+import info.tekware.aereset.data.PrinterStatusSnapshot
+import info.tekware.aereset.service.PrinterService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

@@ -1,4 +1,4 @@
-# AE Reset
+# Android Epson Reset
 
 Android port scaffold for Epson waste ink counter maintenance over USB OTG.
 

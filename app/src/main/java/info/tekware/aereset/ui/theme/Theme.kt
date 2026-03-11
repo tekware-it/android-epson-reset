@@ -1,4 +1,4 @@
-package com.tekware.aereset.ui.theme
+package info.tekware.aereset.ui.theme
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme

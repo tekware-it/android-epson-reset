@@ -1,5 +1,10 @@
-package com.tekware.aereset.ui
+package info.tekware.aereset.ui
 
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -31,18 +36,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.tekware.aereset.data.InkLevel
-import com.tekware.aereset.data.PrinterStatusSnapshot
-import com.tekware.aereset.data.WasteCounterStatus
+import info.tekware.aereset.data.InkLevel
+import info.tekware.aereset.data.PrinterStatusSnapshot
+import info.tekware.aereset.data.WasteCounterStatus
 import java.util.Locale
 
 @Composable
@@ -52,7 +60,14 @@ fun PrinterStatusScreen(
     onRefresh: () -> Unit,
     onReset: () -> Unit,
 ) {
+    val context = LocalContext.current
     var showWarning by remember { mutableStateOf(false) }
+    var showAbout by remember { mutableStateOf(false) }
+    var showExitDialog by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = !showWarning && !showAbout && !showExitDialog) {
+        showExitDialog = true
+    }
 
     Box(
         modifier = Modifier
@@ -65,7 +80,10 @@ fun PrinterStatusScreen(
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState()),
         ) {
-            TitleBar(uiState)
+            TitleBar(
+                uiState = uiState,
+                onAbout = { showAbout = true },
+            )
             Spacer(Modifier.height(8.dp))
 
             Panel("Ink Levels") {
@@ -101,7 +119,14 @@ fun PrinterStatusScreen(
             }
 
             Spacer(Modifier.height(8.dp))
-            Panel("Protocol Log") {
+            Panel(
+                title = "Protocol Log",
+                headerAction = {
+                    if (uiState.logs.isNotEmpty()) {
+                        CopyLogButton(uiState.logs)
+                    }
+                },
+            ) {
                 ProtocolLogPanel(uiState.logs)
             }
         }
@@ -140,6 +165,62 @@ fun PrinterStatusScreen(
             },
         )
     }
+
+    if (showAbout) {
+        AlertDialog(
+            onDismissRequest = { showAbout = false },
+            title = { Text("About") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Epson Reset Android")
+                    Text("GitHub: tekware-it/android-epson-reset")
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showAbout = false
+                        context.startActivity(
+                            Intent(
+                                Intent.ACTION_VIEW,
+                                Uri.parse("https://github.com/tekware-it/android-epson-reset"),
+                            ),
+                        )
+                    },
+                ) {
+                    Text("Open Repo")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showAbout = false }) {
+                    Text("Close")
+                }
+            },
+        )
+    }
+
+    if (showExitDialog) {
+        AlertDialog(
+            onDismissRequest = { showExitDialog = false },
+            title = { Text("Exit app") },
+            text = { Text("Do you want to exit and close Epson Reset Android?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showExitDialog = false
+                        (context as? Activity)?.finish()
+                    },
+                ) {
+                    Text("Exit")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showExitDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -162,13 +243,33 @@ private fun ProtocolLogPanel(logs: List<String>) {
 }
 
 @Composable
-private fun TitleBar(uiState: MainUiState) {
+private fun CopyLogButton(logs: List<String>) {
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val allLogs = logs.joinToString(separator = "\n")
+
+    ClassicButton(
+        text = "Copy",
+        enabled = true,
+        onClick = {
+            clipboard.setText(AnnotatedString(allLogs))
+            Toast.makeText(context, "Protocol log copied", Toast.LENGTH_SHORT).show()
+        },
+    )
+}
+
+@Composable
+private fun TitleBar(
+    uiState: MainUiState,
+    onAbout: () -> Unit,
+) {
     val status = uiState.status
-    val title = status?.modelName ?: "EPS..."
     val subtitle = buildString {
         if (status != null) {
+            append(status.modelName)
+            append("  |  ")
             append(status.state)
-            if (status.error != "None") {
+            if (status.error != "None" && status.error.isNotBlank()) {
                 append(" / ")
                 append(status.error)
             }
@@ -179,14 +280,29 @@ private fun TitleBar(uiState: MainUiState) {
         }
     }
 
-    Column {
-        Text(title, fontWeight = FontWeight.Bold, color = Color.Black)
-        Text(subtitle, color = Color.DarkGray, style = MaterialTheme.typography.bodySmall)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top,
+    ) {
+        Column(modifier = Modifier.widthIn(max = 240.dp)) {
+            Text("Epson Reset Android", fontWeight = FontWeight.Bold, color = Color.Black)
+            Text(subtitle, color = Color.DarkGray, style = MaterialTheme.typography.bodySmall)
+        }
+        ClassicButton(
+            text = "About",
+            enabled = true,
+            onClick = onAbout,
+        )
     }
 }
 
 @Composable
-private fun Panel(title: String, content: @Composable () -> Unit) {
+private fun Panel(
+    title: String,
+    headerAction: (@Composable () -> Unit)? = null,
+    content: @Composable () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -194,7 +310,14 @@ private fun Panel(title: String, content: @Composable () -> Unit) {
             .background(Color(0xFFE6E6E6))
             .padding(6.dp),
     ) {
-        Text(title, color = Color.Black)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(title, color = Color.Black)
+            headerAction?.invoke()
+        }
         Spacer(Modifier.height(4.dp))
         content()
     }

@@ -1,13 +1,13 @@
-package com.tekware.aereset.service
+package info.tekware.aereset.service
 
 import android.content.Context
 import android.hardware.usb.UsbDevice
-import com.tekware.aereset.data.EpsonPrinterCatalog
-import com.tekware.aereset.data.PrinterSpec
-import com.tekware.aereset.data.PrinterStatusSnapshot
-import com.tekware.aereset.data.WasteCounterStatus
-import com.tekware.aereset.protocol.EpsonProtocol
-import com.tekware.aereset.usb.UsbTransport
+import info.tekware.aereset.data.EpsonPrinterCatalog
+import info.tekware.aereset.data.PrinterSpec
+import info.tekware.aereset.data.PrinterStatusSnapshot
+import info.tekware.aereset.data.WasteCounterStatus
+import info.tekware.aereset.protocol.EpsonProtocol
+import info.tekware.aereset.usb.UsbTransport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 

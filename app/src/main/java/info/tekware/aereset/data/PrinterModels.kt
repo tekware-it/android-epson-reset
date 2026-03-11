@@ -1,4 +1,4 @@
-package com.tekware.aereset.data
+package info.tekware.aereset.data
 
 import android.content.Context
 import org.w3c.dom.Element
