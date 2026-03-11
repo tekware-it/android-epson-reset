@@ -172,7 +172,7 @@ fun PrinterStatusScreen(
             title = { Text("About") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Epson Reset Android")
+                    Text("Android Epson Reset")
                     Text("GitHub: tekware-it/android-epson-reset")
                 }
             },
@@ -203,7 +203,7 @@ fun PrinterStatusScreen(
         AlertDialog(
             onDismissRequest = { showExitDialog = false },
             title = { Text("Exit app") },
-            text = { Text("Do you want to exit and close Epson Reset Android?") },
+            text = { Text("Do you want to exit and close Android Epson Reset?") },
             confirmButton = {
                 Button(
                     onClick = {
@@ -286,7 +286,7 @@ private fun TitleBar(
         verticalAlignment = Alignment.Top,
     ) {
         Column(modifier = Modifier.widthIn(max = 240.dp)) {
-            Text("Epson Reset Android", fontWeight = FontWeight.Bold, color = Color.Black)
+            Text("Android Epson Reset", fontWeight = FontWeight.Bold, color = Color.Black)
             Text(subtitle, color = Color.DarkGray, style = MaterialTheme.typography.bodySmall)
         }
         ClassicButton(
