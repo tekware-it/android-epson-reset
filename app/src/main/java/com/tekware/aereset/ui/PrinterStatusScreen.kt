@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -32,8 +34,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.tekware.aereset.data.InkLevel
 import com.tekware.aereset.data.PrinterStatusSnapshot
 import com.tekware.aereset.data.WasteCounterStatus
@@ -207,26 +213,80 @@ private fun InkLevelsPanel(levels: List<InkLevel>) {
         levels.sortedBy { inkSortOrder(it.color) }
     }
 
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        displayLevels.forEach { level ->
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                VerticalInkGauge(
-                    percentage = level.percentage,
-                    fillColor = inkColor(level.color),
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val itemsPerRow = displayLevels.size.coerceAtLeast(1)
+        val compact = displayLevels.size >= 7
+        val spacing = if (compact) 4.dp else 8.dp
+        val cellWidth = (maxWidth - spacing * (itemsPerRow - 1)) / itemsPerRow
+        val gaugeHeight = if (compact) 62.dp else 74.dp
+        val gaugeFillWidth = if (compact) 0.86f else 0.72f
+        val labelFontSize = if (compact) 10.sp else TextUnit.Unspecified
+        val valueFontSize = if (compact) 10.sp else TextUnit.Unspecified
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(spacing),
+        ) {
+            displayLevels.forEach { level ->
+                InkLevelCell(
+                    level = level,
+                    modifier = Modifier.width(cellWidth),
+                    gaugeHeight = gaugeHeight,
+                    gaugeFillWidth = gaugeFillWidth,
+                    labelFontSize = labelFontSize,
+                    valueFontSize = valueFontSize,
                 )
-                Spacer(Modifier.height(4.dp))
-                Text("${level.percentage}%", color = Color.Black, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
 }
 
 @Composable
-private fun VerticalInkGauge(percentage: Int, fillColor: Color) {
+private fun InkLevelCell(
+    level: InkLevel,
+    modifier: Modifier = Modifier,
+    gaugeHeight: androidx.compose.ui.unit.Dp = 74.dp,
+    gaugeFillWidth: Float = 0.72f,
+    labelFontSize: TextUnit = TextUnit.Unspecified,
+    valueFontSize: TextUnit = TextUnit.Unspecified,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = inkShortLabel(level.color),
+            color = Color.Black,
+            style = MaterialTheme.typography.bodySmall.withFontSize(labelFontSize),
+            maxLines = 1,
+        )
+        Spacer(Modifier.height(2.dp))
+        VerticalInkGauge(
+            percentage = level.percentage,
+            fillColor = inkColor(level.color),
+            gaugeHeight = gaugeHeight,
+            modifier = Modifier.fillMaxWidth(gaugeFillWidth),
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "${level.percentage}%",
+            color = Color.Black,
+            style = MaterialTheme.typography.bodySmall.withFontSize(valueFontSize),
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun VerticalInkGauge(
+    percentage: Int,
+    fillColor: Color,
+    gaugeHeight: androidx.compose.ui.unit.Dp,
+    modifier: Modifier = Modifier,
+) {
     Box(
-        modifier = Modifier
-            .width(26.dp)
-            .height(74.dp)
+        modifier = modifier
+            .height(gaugeHeight)
             .border(1.dp, Color(0xFF777777))
             .background(Color(0xFFC9C9C9)),
         contentAlignment = Alignment.BottomCenter,
@@ -235,7 +295,7 @@ private fun VerticalInkGauge(percentage: Int, fillColor: Color) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(72.dp * fillFraction)
+                .height((gaugeHeight - 2.dp) * fillFraction)
                 .background(fillColor),
         )
     }
@@ -254,20 +314,17 @@ private fun WasteLevelsPanel(
         )
     } else {
         counters.mapIndexed { index, counter ->
-            counter.copy(name = "Waste ink counter $index")
+            val normalizedName = counter.name
+                .takeIf { it.isNotBlank() }
+                ?.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
+                ?: "Waste ink counter $index"
+            counter.copy(name = normalizedName)
         }
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         displayCounters.forEach { counter ->
-            Column {
-                Text(
-                    text = "${counter.name}    ${counter.percentage.formatPercent()}",
-                    color = Color.Black,
-                )
-                Spacer(Modifier.height(2.dp))
-                HorizontalGauge(counter.percentage)
-            }
+            WasteCounterRow(counter)
         }
 
         Spacer(Modifier.height(4.dp))
@@ -277,6 +334,33 @@ private fun WasteLevelsPanel(
             onClick = onReset,
             modifier = Modifier.fillMaxWidth(),
         )
+    }
+}
+
+@Composable
+private fun WasteCounterRow(counter: WasteCounterStatus) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = counter.name,
+                color = Color.Black,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 220.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = counter.percentage.formatPercent(),
+                color = Color.Black,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        HorizontalGauge(counter.percentage)
     }
 }
 
@@ -319,9 +403,19 @@ private fun ClassicButton(
 
 private fun inkSortOrder(color: String): Int = when (color.lowercase(Locale.ROOT)) {
     "black" -> 0
-    "yellow" -> 1
-    "magenta" -> 2
-    "cyan" -> 3
+    "light black" -> 1
+    "gray", "grey" -> 2
+    "light gray", "light grey" -> 3
+    "cyan" -> 4
+    "light cyan" -> 5
+    "blue" -> 6
+    "magenta" -> 7
+    "light magenta" -> 8
+    "red" -> 9
+    "yellow" -> 10
+    "dark yellow" -> 11
+    "orange" -> 12
+    "gloss optimizer" -> 13
     else -> 99
 }
 
@@ -333,6 +427,28 @@ private fun inkColor(color: String): Color = when (color.lowercase(Locale.ROOT))
     "light cyan" -> Color(0xFF6FE8FF)
     "light magenta" -> Color(0xFFFF89E9)
     else -> Color.DarkGray
+}
+
+private fun inkShortLabel(color: String): String = when (color.lowercase(Locale.ROOT)) {
+    "black" -> "BK"
+    "cyan" -> "CY"
+    "magenta" -> "MG"
+    "yellow" -> "YE"
+    "light cyan" -> "LC"
+    "light magenta" -> "LM"
+    "dark yellow" -> "DY"
+    "gray", "grey" -> "GY"
+    "light black" -> "LK"
+    "red" -> "RD"
+    "blue" -> "BL"
+    "gloss optimizer" -> "GO"
+    "light gray", "light grey" -> "LG"
+    "orange" -> "OR"
+    else -> color.take(2).uppercase(Locale.ROOT)
+}
+
+private fun TextStyle.withFontSize(fontSize: TextUnit): TextStyle {
+    return if (fontSize == TextUnit.Unspecified) this else copy(fontSize = fontSize)
 }
 
 private fun Double.formatPercent(): String = String.format(Locale.US, "%.2f%%", this)
