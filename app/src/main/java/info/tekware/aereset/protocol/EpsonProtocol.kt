@@ -7,6 +7,11 @@ import info.tekware.aereset.data.WasteCounterStatus
 import kotlin.math.min
 
 class EpsonProtocol(private val spec: PrinterSpec) {
+    enum class ControlBackend {
+        D4,
+        END4,
+    }
+
     data class D4Frame(
         val psid: Int,
         val ssid: Int,
@@ -26,6 +31,29 @@ class EpsonProtocol(private val spec: PrinterSpec) {
 
     fun buildEnterDot4Packet(): ByteArray {
         return byteArrayOf(0x00, 0x00, 0x00, 0x1B, 0x01) + "@EJL 1284.4\n@EJL\n@EJL\n".encodeToByteArray()
+    }
+
+    fun buildEnd4ExitPacketMode2(): ByteArray {
+        return byteArrayOf(0x00, 0x00, 0x00, 0x1B, 0x01) + "@EJL 1284.4\n@EJL\t\t\t\t\t\n".encodeToByteArray()
+    }
+
+    fun buildEnd4Packet(command: ByteArray): ByteArray {
+        val length = command.size + 14
+        require(length <= 0xFF) { "END4 packet too large" }
+        return "END4".encodeToByteArray() +
+            byteArrayOf(
+                0x02,
+                0x01,
+                0x00,
+                0x00,
+                0x00,
+                length.toByte(),
+                0x00,
+                0x00,
+                0x02,
+                0x00,
+            ) +
+            command
     }
 
     fun buildInitCommandPayload(): ByteArray = byteArrayOf(0x10)

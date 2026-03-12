@@ -20,6 +20,19 @@ import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 
 class UsbTransport(private val context: Context) {
+    data class InterfaceInfo(
+        val id: Int,
+        val interfaceClass: Int,
+        val interfaceSubclass: Int,
+        val interfaceProtocol: Int,
+        val endpointDescriptions: List<String>,
+    )
+
+    data class ReadChunk(
+        val offsetMs: Long,
+        val bytes: ByteArray,
+    )
+
     data class Session(
         val device: UsbDevice,
         val connection: UsbDeviceConnection,
@@ -36,6 +49,7 @@ class UsbTransport(private val context: Context) {
 
     private val usbManager: UsbManager =
         context.getSystemService(Context.USB_SERVICE) as UsbManager
+    private val preferredInterfaceByDeviceKey = mutableMapOf<String, Int>()
 
     fun findEpsonDevices(): List<UsbDevice> {
         return usbManager.deviceList.values.filter { it.vendorId == EpsonPrinterCatalog.EPSON_VENDOR_ID }
@@ -78,6 +92,17 @@ class UsbTransport(private val context: Context) {
     suspend fun open(device: UsbDevice): Session = withContext(Dispatchers.IO) {
         require(requestPermission(device)) { "USB permission denied" }
         val usbInterface = findPrinterInterface(device) ?: error("Printer interface not found")
+        openOnInterface(device, usbInterface, permissionAlreadyGranted = true)
+    }
+
+    suspend fun openOnInterface(
+        device: UsbDevice,
+        usbInterface: UsbInterface,
+        permissionAlreadyGranted: Boolean = false,
+    ): Session = withContext(Dispatchers.IO) {
+        if (!permissionAlreadyGranted) {
+            require(requestPermission(device)) { "USB permission denied" }
+        }
         val connection = usbManager.openDevice(device) ?: error("Unable to open USB device")
         require(connection.claimInterface(usbInterface, true)) { "Unable to claim interface" }
 
@@ -91,6 +116,70 @@ class UsbTransport(private val context: Context) {
         }
 
         Session(device, connection, usbInterface, bulkIn, bulkOut)
+    }
+
+    fun listInterfaces(device: UsbDevice): List<InterfaceInfo> {
+        return buildList {
+            for (index in 0 until device.interfaceCount) {
+                val usbInterface = device.getInterface(index)
+                val endpoints = buildList {
+                    for (endpointIndex in 0 until usbInterface.endpointCount) {
+                        val endpoint = usbInterface.getEndpoint(endpointIndex)
+                        add(
+                            "ep$endpointIndex addr=0x${endpoint.address.toString(16)} " +
+                                "type=${endpoint.type} dir=${endpoint.direction} maxPacket=${endpoint.maxPacketSize}",
+                        )
+                    }
+                }
+                add(
+                    InterfaceInfo(
+                        id = usbInterface.id,
+                        interfaceClass = usbInterface.interfaceClass,
+                        interfaceSubclass = usbInterface.interfaceSubclass,
+                        interfaceProtocol = usbInterface.interfaceProtocol,
+                        endpointDescriptions = endpoints,
+                    ),
+                )
+            }
+        }
+    }
+
+    fun candidateInterfaces(device: UsbDevice): List<UsbInterface> {
+        val candidates = mutableListOf<UsbInterface>()
+        for (index in 0 until device.interfaceCount) {
+            val usbInterface = device.getInterface(index)
+            val hasBulkIn = (0 until usbInterface.endpointCount).any { endpointIndex ->
+                val endpoint = usbInterface.getEndpoint(endpointIndex)
+                endpoint.type == UsbConstants.USB_ENDPOINT_XFER_BULK &&
+                    endpoint.direction == UsbConstants.USB_DIR_IN
+            }
+            val hasBulkOut = (0 until usbInterface.endpointCount).any { endpointIndex ->
+                val endpoint = usbInterface.getEndpoint(endpointIndex)
+                endpoint.type == UsbConstants.USB_ENDPOINT_XFER_BULK &&
+                    endpoint.direction == UsbConstants.USB_DIR_OUT
+            }
+            if (hasBulkIn && hasBulkOut) {
+                candidates += usbInterface
+            }
+        }
+        val preferredId = preferredInterfaceByDeviceKey[deviceKey(device)]
+        return candidates.sortedWith(
+            compareBy<UsbInterface> {
+                when {
+                    preferredId != null && it.id == preferredId -> 0
+                    it.interfaceClass == UsbConstants.USB_CLASS_VENDOR_SPEC &&
+                        it.interfaceSubclass == 0xAA &&
+                        it.interfaceProtocol == 0x01 -> 1
+                    it.interfaceClass == UsbConstants.USB_CLASS_VENDOR_SPEC -> 2
+                    it.interfaceClass == UsbConstants.USB_CLASS_PRINTER -> 3
+                    else -> 4
+                }
+            }.thenBy { it.id },
+        )
+    }
+
+    fun rememberPreferredInterface(device: UsbDevice, interfaceId: Int) {
+        preferredInterfaceByDeviceKey[deviceKey(device)] = interfaceId
     }
 
     fun getDeviceId(session: Session, timeoutMs: Int = 2000): String {
@@ -126,8 +215,50 @@ class UsbTransport(private val context: Context) {
 
     fun bulkWrite(session: Session, data: ByteArray, timeoutMs: Int = 4000) {
         val endpoint = requireNotNull(session.bulkOut) { "Bulk OUT endpoint missing" }
-        val transferred = session.connection.bulkTransfer(endpoint, data, data.size, timeoutMs)
-        require(transferred == data.size) { "Bulk write failed: $transferred/${data.size}" }
+        var offset = 0
+        while (offset < data.size) {
+            val transferred = session.connection.bulkTransfer(
+                endpoint,
+                data.copyOfRange(offset, data.size),
+                data.size - offset,
+                timeoutMs,
+            )
+            require(transferred > 0) { "Bulk write failed: $transferred/${data.size - offset}" }
+            offset += transferred
+        }
+    }
+
+    fun bulkWriteChunked(
+        session: Session,
+        data: ByteArray,
+        chunkSize: Int = 512,
+        timeoutMs: Int = 4000,
+    ) {
+        require(chunkSize > 0) { "chunkSize must be > 0" }
+        var offset = 0
+        while (offset < data.size) {
+            val end = minOf(offset + chunkSize, data.size)
+            var attempts = 0
+            var written = false
+            var currentChunkSize = end - offset
+            while (!written && attempts < 4) {
+                val chunk = data.copyOfRange(offset, offset + currentChunkSize)
+                val result = runCatching {
+                    bulkWrite(session, chunk, timeoutMs = timeoutMs)
+                }
+                if (result.isSuccess) {
+                    written = true
+                } else {
+                    attempts += 1
+                    currentChunkSize = maxOf(currentChunkSize / 2, session.bulkOut?.maxPacketSize ?: 64, 64)
+                    if (currentChunkSize >= end - offset && attempts >= 4) {
+                        throw result.exceptionOrNull() ?: error("Bulk write failed")
+                    }
+                }
+            }
+            require(written) { "Bulk write chunk failed" }
+            offset = end
+        }
     }
 
     fun bulkRead(session: Session, expectedBytes: Int, timeoutMs: Int = 4000): ByteArray {
@@ -173,6 +304,60 @@ class UsbTransport(private val context: Context) {
         }
     }
 
+    fun bulkReadUpTo(session: Session, maxBytes: Int, timeoutMs: Int = 2000): ByteArray {
+        val endpoint = requireNotNull(session.bulkIn) { "Bulk IN endpoint missing" }
+        val packetSize = maxOf(endpoint.maxPacketSize, 64)
+        val collected = mutableListOf<Byte>()
+        val chunk = ByteArray(maxOf(packetSize, maxBytes))
+        val deadline = System.currentTimeMillis() + timeoutMs
+
+        while (collected.size < maxBytes && System.currentTimeMillis() < deadline) {
+            val remaining = deadline - System.currentTimeMillis()
+            val transferTimeout = remaining.coerceAtMost(250L).toInt().coerceAtLeast(1)
+            val transferred = session.connection.bulkTransfer(endpoint, chunk, chunk.size, transferTimeout)
+            if (transferred > 0) {
+                repeat(minOf(transferred, maxBytes - collected.size)) { index ->
+                    collected += chunk[index]
+                }
+            }
+        }
+
+        return collected.toByteArray()
+    }
+
+    fun captureIncoming(
+        session: Session,
+        windowMs: Int = 1000,
+        idleTimeoutMs: Int = 120,
+        packetSize: Int = 16384,
+    ): List<ReadChunk> {
+        val endpoint = requireNotNull(session.bulkIn) { "Bulk IN endpoint missing" }
+        val buffer = ByteArray(maxOf(packetSize, endpoint.maxPacketSize, 64))
+        val chunks = mutableListOf<ReadChunk>()
+        val startedAt = System.currentTimeMillis()
+        var lastDataAt = startedAt
+
+        while (System.currentTimeMillis() - startedAt < windowMs) {
+            val transferred = session.connection.bulkTransfer(endpoint, buffer, buffer.size, idleTimeoutMs)
+            if (transferred > 0) {
+                val chunk = buffer.copyOf(transferred)
+                chunk.forEach { session.readBuffer += it }
+                chunks += ReadChunk(
+                    offsetMs = System.currentTimeMillis() - startedAt,
+                    bytes = chunk,
+                )
+                lastDataAt = System.currentTimeMillis()
+                continue
+            }
+
+            if (chunks.isNotEmpty() && System.currentTimeMillis() - lastDataAt >= idleTimeoutMs) {
+                break
+            }
+        }
+
+        return chunks
+    }
+
     fun drain(session: Session, timeoutMs: Int = 50) {
         session.readBuffer.clear()
         while (true) {
@@ -184,13 +369,11 @@ class UsbTransport(private val context: Context) {
     }
 
     private fun findPrinterInterface(device: UsbDevice): UsbInterface? {
-        for (index in 0 until device.interfaceCount) {
-            val usbInterface = device.getInterface(index)
-            if (usbInterface.interfaceClass == UsbConstants.USB_CLASS_PRINTER || usbInterface.endpointCount > 0) {
-                return usbInterface
-            }
-        }
-        return null
+        return candidateInterfaces(device).firstOrNull()
+    }
+
+    private fun deviceKey(device: UsbDevice): String {
+        return listOf(device.vendorId, device.productId, device.deviceName).joinToString(":")
     }
 
     private companion object {

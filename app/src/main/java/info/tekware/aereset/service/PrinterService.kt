@@ -22,7 +22,8 @@ class PrinterService(
         val spec: PrinterSpec,
         val protocol: EpsonProtocol,
         val deviceId: String,
-        val controlChannel: EpsonProtocol.D4ChannelState,
+        val backend: EpsonProtocol.ControlBackend,
+        val controlChannel: EpsonProtocol.D4ChannelState? = null,
     )
 
     private val transport = UsbTransport(appContext)
@@ -35,48 +36,49 @@ class PrinterService(
 
     suspend fun connectPrinter(device: UsbDevice): ConnectionState = withContext(Dispatchers.IO) {
         log("USB device detected: vendor=0x${device.vendorId.toString(16)} product=0x${device.productId.toString(16)} name=${device.productName ?: device.deviceName}")
-        val session = transport.open(device)
-        log("USB session opened, claiming interface ${session.usbInterface.id}")
-        transport.softReset(session)
-        log("USB soft reset sent")
-        val deviceId = transport.getDeviceId(session)
-        log("IEEE1284 device ID: $deviceId")
-        val spec = EpsonPrinterCatalog.resolve(appContext, deviceId)
-            ?: error("Unsupported Epson model: $deviceId")
-        log("Resolved model spec: ${spec.modelName}, counters=${spec.wasteCounters.size}, resetEntries=${spec.resetMap.size}")
-        val protocol = EpsonProtocol(spec)
+        require(transport.requestPermission(device)) { "USB permission denied" }
+        transport.listInterfaces(device).forEach { info ->
+            log(
+                "USB interface ${info.id}: class=0x${info.interfaceClass.toString(16)} " +
+                    "subclass=0x${info.interfaceSubclass.toString(16)} protocol=0x${info.interfaceProtocol.toString(16)}",
+            )
+            info.endpointDescriptions.forEach { endpoint ->
+                log("  $endpoint")
+            }
+        }
+        val candidates = transport.candidateInterfaces(device)
+        require(candidates.isNotEmpty()) { "No USB interfaces with bulk IN/OUT endpoints found" }
 
-        transport.drain(session)
-        log("Transport drained before entering IEEE 1284.4 mode")
-        transport.bulkWrite(session, protocol.buildEnterDot4Packet())
-        val enterReply = transport.bulkRead(session, 8, timeoutMs = 8000)
-        log("1284.4 enter reply: ${enterReply.joinToString(" ") { "%02X".format(it) }}")
-        log("Entered IEEE 1284.4 mode")
+        var lastError: Throwable? = null
+        candidates.forEachIndexed { index, usbInterface ->
+            log("Trying USB interface ${usbInterface.id} (${index + 1}/${candidates.size})")
 
-        sendD4Command(session, protocol, 0x00, protocol.buildInitCommandPayload())
-        log("D4 Init completed")
-        val socketReply = sendD4Command(session, protocol, 0x09, protocol.buildGetSocketIdPayload("EPSON-CTRL"))
-        val ssid = socketReply.firstOrNull()?.toInt()?.and(0xFF) ?: error("Missing EPSON-CTRL SSID")
-        log("EPSON-CTRL socket ID = $ssid")
+            val firstAttempt = runCatching { connectOnce(device, usbInterface.id, performSoftReset = true) }
+            firstAttempt.getOrNull()?.let {
+                transport.rememberPreferredInterface(device, usbInterface.id)
+                return@withContext it
+            }
 
-        val openReply = sendD4Command(session, protocol, 0x01, protocol.buildOpenChannelPayload(ssid))
-        require(openReply.size >= 8) { "Invalid open channel response" }
-        val psid = openReply[0].toInt() and 0xFF
-        val mtu = ((openReply[2].toInt() and 0xFF) shl 8) or (openReply[3].toInt() and 0xFF)
-        val credit = ((openReply[6].toInt() and 0xFF) shl 8) or (openReply[7].toInt() and 0xFF)
-        val channel = EpsonProtocol.D4ChannelState(psid = psid, ssid = ssid, mtu = mtu, txCredits = credit)
-        log("Channel opened: psid=$psid ssid=$ssid mtu=$mtu credit=$credit")
+            val firstError = firstAttempt.exceptionOrNull()
+            if (firstError?.message?.contains("Printer rejected IEEE 1284.4 enter sequence") == true) {
+                log("1284.4 enter was rejected after Android soft reset on interface ${usbInterface.id}, retrying without soft reset")
+                val secondAttempt = runCatching { connectOnce(device, usbInterface.id, performSoftReset = false) }
+                secondAttempt.getOrNull()?.let {
+                    transport.rememberPreferredInterface(device, usbInterface.id)
+                    return@withContext it
+                }
 
-        sendD4Command(session, protocol, 0x03, protocol.buildCreditPayload(psid, ssid, channel.rxCreditsMax))
-        log("Initial D4 credit granted=${channel.rxCreditsMax}")
+                val secondError = secondAttempt.exceptionOrNull()
+                lastError = secondError
+                log("D4 failed on interface ${usbInterface.id}: ${lastError?.message}")
+                return@forEachIndexed
+            }
 
-        ConnectionState(
-            session = session,
-            spec = spec,
-            protocol = protocol,
-            deviceId = deviceId,
-            controlChannel = channel,
-        )
+            lastError = firstError
+            log("Interface ${usbInterface.id} failed before D4 fallback: ${lastError?.message}")
+        }
+
+        throw lastError ?: error("Unable to connect to printer")
     }
 
     suspend fun readPrinterStatus(connection: ConnectionState): PrinterStatusSnapshot = withContext(Dispatchers.IO) {
@@ -110,28 +112,118 @@ class PrinterService(
 
     fun close(connection: ConnectionState) {
         runCatching {
+            val channel = connection.controlChannel ?: return@runCatching
             sendD4Command(
                 connection.session,
                 connection.protocol,
                 0x02,
-                byteArrayOf(connection.controlChannel.psid.toByte(), connection.controlChannel.ssid.toByte()),
+                byteArrayOf(channel.psid.toByte(), channel.ssid.toByte()),
             )
         }
         connection.session.close()
     }
 
+    private suspend fun connectOnce(device: UsbDevice, interfaceId: Int, performSoftReset: Boolean): ConnectionState {
+        val usbInterface = transport.candidateInterfaces(device).firstOrNull { it.id == interfaceId }
+            ?: error("USB interface $interfaceId not found")
+        val session = transport.openOnInterface(device, usbInterface, permissionAlreadyGranted = true)
+        try {
+            log("USB session opened, claiming interface ${session.usbInterface.id}")
+            if (performSoftReset) {
+                transport.softReset(session)
+                log("USB soft reset sent")
+            } else {
+                log("Skipping Android USB soft reset for this attempt")
+            }
+
+            val deviceId = transport.getDeviceId(session)
+            log("IEEE1284 device ID: $deviceId")
+            val spec = EpsonPrinterCatalog.resolve(appContext, deviceId)
+                ?: error("Unsupported Epson model: $deviceId")
+            log("Resolved model spec: ${spec.modelName}, counters=${spec.wasteCounters.size}, resetEntries=${spec.resetMap.size}")
+            val protocol = EpsonProtocol(spec)
+
+            val enterReply = enterDot4(session, protocol)
+            if (enterReply.contentEquals(byteArrayOf(0x15))) {
+                error("Printer rejected IEEE 1284.4 enter sequence with NAK (0x15)")
+            }
+            log("Entered IEEE 1284.4 mode")
+
+            sendD4Command(session, protocol, 0x00, protocol.buildInitCommandPayload())
+            log("D4 Init completed")
+            val socketReply = sendD4Command(session, protocol, 0x09, protocol.buildGetSocketIdPayload("EPSON-CTRL"))
+            val ssid = socketReply.firstOrNull()?.toInt()?.and(0xFF) ?: error("Missing EPSON-CTRL SSID")
+            log("EPSON-CTRL socket ID = $ssid")
+
+            val openReply = sendD4Command(session, protocol, 0x01, protocol.buildOpenChannelPayload(ssid))
+            require(openReply.size >= 8) { "Invalid open channel response" }
+            val psid = openReply[0].toInt() and 0xFF
+            val mtu = ((openReply[2].toInt() and 0xFF) shl 8) or (openReply[3].toInt() and 0xFF)
+            val credit = ((openReply[6].toInt() and 0xFF) shl 8) or (openReply[7].toInt() and 0xFF)
+            val channel = EpsonProtocol.D4ChannelState(psid = psid, ssid = ssid, mtu = mtu, txCredits = credit)
+            log("Channel opened: psid=$psid ssid=$ssid mtu=$mtu credit=$credit")
+
+            sendD4Command(session, protocol, 0x03, protocol.buildCreditPayload(psid, ssid, channel.rxCreditsMax))
+            log("Initial D4 credit granted=${channel.rxCreditsMax}")
+
+            return ConnectionState(
+                session = session,
+                spec = spec,
+                protocol = protocol,
+                deviceId = deviceId,
+                backend = EpsonProtocol.ControlBackend.D4,
+                controlChannel = channel,
+            )
+        } catch (t: Throwable) {
+            session.close()
+            throw t
+        }
+    }
+
+    private fun enterDot4(session: UsbTransport.Session, protocol: EpsonProtocol): ByteArray {
+        transport.drain(session)
+        log("Transport drained before entering IEEE 1284.4 mode")
+        transport.bulkWrite(session, protocol.buildEnterDot4Packet())
+        val enterChunks = transport.captureIncoming(session, windowMs = 1000, idleTimeoutMs = 120)
+        if (enterChunks.isEmpty()) {
+            log("1284.4 enter reply: <no data>")
+        } else {
+            enterChunks.forEachIndexed { index, chunk ->
+                log(
+                    "1284.4 RX chunk[$index] +${chunk.offsetMs}ms: ${
+                        chunk.bytes.joinToString(" ") { "%02X".format(it) }
+                    }",
+                )
+            }
+        }
+        val buffered = session.readBuffer.size
+        val enterReply = if (buffered >= 8) {
+            transport.bulkRead(session, 8, timeoutMs = 1)
+        } else {
+            session.readBuffer.take(buffered).toByteArray().also {
+                repeat(buffered) { session.readBuffer.removeAt(0) }
+            }
+        }
+        log("1284.4 enter aggregate: ${enterReply.joinToString(" ") { "%02X".format(it) }}")
+        if (enterReply.size < 8) {
+            log("1284.4 enter reply shorter than expected (${enterReply.size}/8)")
+        }
+        return enterReply
+    }
+
     private fun sendControlPayload(connection: ConnectionState, payload: ByteArray): ByteArray {
         ensureChannelCredit(connection)
         log("CTRL TX: ${payload.joinToString(" ") { "%02X".format(it) }}")
-        val frames = connection.protocol.chunkForChannel(connection.controlChannel, payload)
+        val channel = requireNotNull(connection.controlChannel) { "D4 control channel missing" }
+        val frames = connection.protocol.chunkForChannel(channel, payload)
         frames.forEach { frame ->
             log("D4 TX frame psid=${frame.psid} ssid=${frame.ssid} credit=${frame.credit} control=${frame.control} len=${frame.payload.size}")
             transport.bulkWrite(connection.session, connection.protocol.encodeD4Frame(frame))
-            connection.controlChannel.txCredits -= 1
+            channel.txCredits -= 1
         }
         val reply = readD4Reply(connection.session, connection.protocol)
-        connection.controlChannel.txCredits += reply.credit
-        connection.controlChannel.rxCredits = (connection.controlChannel.rxCredits - 1).coerceAtLeast(0)
+        channel.txCredits += reply.credit
+        channel.rxCredits = (channel.rxCredits - 1).coerceAtLeast(0)
         log("CTRL RX: ${reply.payload.joinToString(" ") { "%02X".format(it) }}")
         return reply.payload
     }
@@ -154,7 +246,7 @@ class PrinterService(
     }
 
     private fun ensureChannelCredit(connection: ConnectionState) {
-        val channel = connection.controlChannel
+        val channel = requireNotNull(connection.controlChannel) { "D4 control channel missing" }
         if (channel.txCredits > 0) {
             return
         }
