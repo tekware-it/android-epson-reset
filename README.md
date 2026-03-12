@@ -1,5 +1,17 @@
 # Android Epson Reset
 
+<p align="center">
+  <a href="https://github.com/tekware-it/android-epson-reset/releases">
+    <img alt="GitHub Release" src="https://img.shields.io/github/v/release/tekware-it/android-epson-reset?display_name=tag" />
+  </a>
+</p>
+
+<p align="center">
+  <img src="play-store/Screenshot_20260312_215851_Android%20Epson%20Reset.jpg" alt="Android Epson Reset screenshot 1" width="30%" />
+  <img src="play-store/Screenshot_20260312_215906_Android%20Epson%20Reset.jpg" alt="Android Epson Reset screenshot 2" width="30%" />
+  <img src="play-store/Screenshot_20260312_215921_Android%20Epson%20Reset.jpg" alt="Android Epson Reset screenshot 3" width="30%" />
+</p>
+
 Android port of [`ez-reset`](https://github.com/CiRIP/ez-reset) for Epson printer maintenance over USB OTG.
 
 This app is aimed at Epson inkjet printers that expose the same service protocol used by `ez-reset`. It can detect supported Epson USB devices, open the control channel, read printer status, inspect waste ink counters, and issue waste counter reset commands directly from an Android device.

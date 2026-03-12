@@ -5,14 +5,14 @@ plugins {
 
 android {
     namespace = "info.tekware.aereset"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "info.tekware.aereset"
         minSdk = 24
-        targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        targetSdk = 35
+        versionCode = 2
+        versionName = "0.1.1"
 
         vectorDrawables {
             useSupportLibrary = true
