@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Build.VERSION.SDK_INT
 import info.tekware.aereset.data.EpsonPrinterCatalog
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
@@ -89,8 +90,28 @@ class UsbTransport(private val context: Context) {
         usbManager.requestPermission(device, intent)
     }
 
+    suspend fun ensurePermission(device: UsbDevice, settleDelayMs: Long = 250): Boolean {
+        if (usbManager.hasPermission(device)) {
+            return true
+        }
+
+        val granted = requestPermission(device)
+        if (granted && usbManager.hasPermission(device)) {
+            return true
+        }
+
+        repeat(4) {
+            delay(settleDelayMs)
+            if (usbManager.hasPermission(device)) {
+                return true
+            }
+        }
+
+        return usbManager.hasPermission(device)
+    }
+
     suspend fun open(device: UsbDevice): Session = withContext(Dispatchers.IO) {
-        require(requestPermission(device)) { "USB permission denied" }
+        require(ensurePermission(device)) { "USB permission denied" }
         val usbInterface = findPrinterInterface(device) ?: error("Printer interface not found")
         openOnInterface(device, usbInterface, permissionAlreadyGranted = true)
     }
@@ -101,7 +122,7 @@ class UsbTransport(private val context: Context) {
         permissionAlreadyGranted: Boolean = false,
     ): Session = withContext(Dispatchers.IO) {
         if (!permissionAlreadyGranted) {
-            require(requestPermission(device)) { "USB permission denied" }
+            require(ensurePermission(device)) { "USB permission denied" }
         }
         val connection = usbManager.openDevice(device) ?: error("Unable to open USB device")
         require(connection.claimInterface(usbInterface, true)) { "Unable to claim interface" }

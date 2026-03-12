@@ -36,7 +36,7 @@ class PrinterService(
 
     suspend fun connectPrinter(device: UsbDevice): ConnectionState = withContext(Dispatchers.IO) {
         log("USB device detected: vendor=0x${device.vendorId.toString(16)} product=0x${device.productId.toString(16)} name=${device.productName ?: device.deviceName}")
-        require(transport.requestPermission(device)) { "USB permission denied" }
+        require(transport.ensurePermission(device)) { "USB permission denied" }
         transport.listInterfaces(device).forEach { info ->
             log(
                 "USB interface ${info.id}: class=0x${info.interfaceClass.toString(16)} " +
