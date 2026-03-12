@@ -59,6 +59,7 @@ fun PrinterStatusScreen(
     onConnect: () -> Unit,
     onRefresh: () -> Unit,
     onReset: () -> Unit,
+    onDismissResetSuccess: () -> Unit,
 ) {
     val context = LocalContext.current
     var showWarning by remember { mutableStateOf(false) }
@@ -217,6 +218,36 @@ fun PrinterStatusScreen(
             dismissButton = {
                 OutlinedButton(onClick = { showExitDialog = false }) {
                     Text("Cancel")
+                }
+            },
+        )
+    }
+
+    uiState.resetSuccessMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = onDismissResetSuccess,
+            title = { Text("Reset completed") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(message)
+                    Text("Donate now to support development of this and my other free apps, thank you!")
+                    OutlinedButton(
+                        onClick = {
+                            context.startActivity(
+                                Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse("https://github.com/tekware-it/android-epson-reset"),
+                                ),
+                            )
+                        },
+                    ) {
+                        Text("Open GitHub Repo")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = onDismissResetSuccess) {
+                    Text("OK")
                 }
             },
         )

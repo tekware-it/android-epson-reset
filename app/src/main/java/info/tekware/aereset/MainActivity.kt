@@ -37,6 +37,7 @@ class MainActivity : ComponentActivity() {
                     onConnect = viewModel::discoverAndConnect,
                     onRefresh = viewModel::refreshStatus,
                     onReset = viewModel::resetWasteCounters,
+                    onDismissResetSuccess = viewModel::dismissResetSuccess,
                 )
             }
         }

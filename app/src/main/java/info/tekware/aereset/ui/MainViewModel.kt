@@ -17,6 +17,7 @@ data class MainUiState(
     val isBusy: Boolean = false,
     val error: String? = null,
     val logs: List<String> = emptyList(),
+    val resetSuccessMessage: String? = null,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -74,9 +75,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             runJob("Resetting waste counters") {
                 val counters = printerService.resetWasteCounters(current)
                 appendLog("Waste counters reset: ${counters.joinToString { "${it.name}=${it.percentage}%" }}")
+                _uiState.value = _uiState.value.copy(
+                    resetSuccessMessage = "Waste ink counters have been reset. Restart the printer if required by the model.",
+                )
                 refreshStatus()
             }
         }
+    }
+
+    fun dismissResetSuccess() {
+        _uiState.value = _uiState.value.copy(resetSuccessMessage = null)
     }
 
     override fun onCleared() {
