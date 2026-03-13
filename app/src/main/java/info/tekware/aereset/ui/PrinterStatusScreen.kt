@@ -27,7 +27,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -58,13 +60,18 @@ fun PrinterStatusScreen(
     uiState: MainUiState,
     onConnect: () -> Unit,
     onRefresh: () -> Unit,
-    onReset: () -> Unit,
+    onReset: (Set<String>, Int) -> Unit,
     onDismissResetSuccess: () -> Unit,
 ) {
     val context = LocalContext.current
     var showWarning by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
     var showExitDialog by remember { mutableStateOf(false) }
+    val availableCounters = uiState.status?.wasteCounters.orEmpty()
+    var selectedCounters by remember(availableCounters) {
+        mutableStateOf(availableCounters.map { it.name }.toSet())
+    }
+    var targetPercentageText by remember { mutableStateOf("0") }
 
     BackHandler(enabled = !showWarning && !showAbout && !showExitDialog) {
         showExitDialog = true
@@ -96,6 +103,7 @@ fun PrinterStatusScreen(
             Panel("Waste Levels") {
                 WasteLevelsPanel(
                     counters = uiState.status?.wasteCounters.orEmpty(),
+                    connected = uiState.status != null,
                     busy = uiState.isBusy,
                     onReset = { showWarning = true },
                 )
@@ -146,22 +154,54 @@ fun PrinterStatusScreen(
         AlertDialog(
             onDismissRequest = { showWarning = false },
             title = { Text("Reset waste counters") },
-            text = {
-                Text("Resetting waste ink counters modifies internal printer firmware values. Use at your own risk.")
-            },
             confirmButton = {
                 Button(
                     onClick = {
                         showWarning = false
-                        onReset()
+                        onReset(selectedCounters, targetPercentageText.toIntOrNull()?.coerceIn(0, 100) ?: 0)
                     },
+                    enabled = selectedCounters.isNotEmpty(),
                 ) {
-                    Text("Reset All")
+                    Text("Write Counters")
                 }
             },
             dismissButton = {
                 OutlinedButton(onClick = { showWarning = false }) {
                     Text("Cancel")
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Resetting waste ink counters modifies internal printer firmware values. Use at your own risk.")
+                    OutlinedTextField(
+                        value = targetPercentageText,
+                        onValueChange = { input ->
+                            if (input.all { it.isDigit() } && input.length <= 3) {
+                                targetPercentageText = input
+                            }
+                        },
+                        label = { Text("Target percentage") },
+                        singleLine = true,
+                    )
+                    availableCounters.forEach { counter ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(counter.name, color = Color.Black)
+                            Checkbox(
+                                checked = counter.name in selectedCounters,
+                                onCheckedChange = { checked ->
+                                    selectedCounters = if (checked) {
+                                        selectedCounters + counter.name
+                                    } else {
+                                        selectedCounters - counter.name
+                                    }
+                                },
+                            )
+                        }
+                    }
                 }
             },
         )
@@ -458,6 +498,7 @@ private fun VerticalInkGauge(
 @Composable
 private fun WasteLevelsPanel(
     counters: List<WasteCounterStatus>,
+    connected: Boolean,
     busy: Boolean,
     onReset: () -> Unit,
 ) {
@@ -483,8 +524,8 @@ private fun WasteLevelsPanel(
 
         Spacer(Modifier.height(4.dp))
         ClassicButton(
-            text = "Reset All",
-            enabled = !busy,
+            text = "Write Counters",
+            enabled = connected && !busy,
             onClick = onReset,
             modifier = Modifier.fillMaxWidth(),
         )

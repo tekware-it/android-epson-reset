@@ -6,6 +6,7 @@ import info.tekware.aereset.data.EpsonPrinterCatalog
 import info.tekware.aereset.data.PrinterSpec
 import info.tekware.aereset.data.PrinterStatusSnapshot
 import info.tekware.aereset.data.WasteCounterStatus
+import info.tekware.aereset.data.WasteCounterSpec
 import info.tekware.aereset.protocol.EpsonProtocol
 import info.tekware.aereset.usb.UsbTransport
 import kotlinx.coroutines.Dispatchers
@@ -106,6 +107,31 @@ class PrinterService(
         connection.protocol.buildResetCommand().forEach { command ->
             log("Reset command: ${command.joinToString(" ") { "%02X".format(it) }}")
             sendControlPayload(connection, command)
+        }
+        readPrinterStatus(connection).wasteCounters
+    }
+
+    suspend fun writeWasteCounters(
+        connection: ConnectionState,
+        selectedCounterNames: Set<String>,
+        targetPercentage: Int,
+    ): List<WasteCounterStatus> = withContext(Dispatchers.IO) {
+        require(targetPercentage in 0..100) { "Target percentage must be between 0 and 100" }
+        val selectedCounters = connection.spec.wasteCounters.filter { it.name in selectedCounterNames }
+        require(selectedCounters.isNotEmpty()) { "No waste counter selected" }
+
+        if (
+            targetPercentage == 0 &&
+            selectedCounters.size == connection.spec.wasteCounters.size
+        ) {
+            return@withContext resetWasteCounters(connection)
+        }
+
+        log(
+            "Writing waste counters ${selectedCounters.joinToString { it.name }} to $targetPercentage%",
+        )
+        selectedCounters.forEach { counter ->
+            writeWasteCounter(connection, counter, targetPercentage)
         }
         readPrinterStatus(connection).wasteCounters
     }
@@ -278,5 +304,22 @@ class PrinterService(
         require(payload.size >= 18 && payload.copyOfRange(0, expected.size).contentEquals(expected)) { "Unexpected EEPROM response" }
         val hex = payload.copyOfRange(16, 18).decodeToString()
         return hex.toInt(16).toByte()
+    }
+
+    private fun writeWasteCounter(
+        connection: ConnectionState,
+        counter: WasteCounterSpec,
+        targetPercentage: Int,
+    ) {
+        val targetValue = ((counter.max.toLong() * targetPercentage.toLong()) / 100L).toInt()
+        val bytes = counter.addresses.mapIndexed { index, address ->
+            val value = (targetValue shr (index * 8)) and 0xFF
+            log(
+                "Waste write '${counter.name}' address=0x${address.toString(16).uppercase()} value=0x${value.toString(16).uppercase().padStart(2, '0')}",
+            )
+            sendControlPayload(connection, connection.protocol.buildWriteEepromCommand(address, value))
+            value
+        }
+        log("Waste counter '${counter.name}' written bytes=${bytes.joinToString(" ") { "%02X".format(it) }}")
     }
 }

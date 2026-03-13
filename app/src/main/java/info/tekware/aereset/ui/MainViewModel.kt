@@ -66,17 +66,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun resetWasteCounters() {
+    fun resetWasteCounters(selectedCounterNames: Set<String>, targetPercentage: Int) {
         val current = connection ?: run {
             appendError("Printer is not connected")
             return
         }
         viewModelScope.launch {
             runJob("Resetting waste counters") {
-                val counters = printerService.resetWasteCounters(current)
-                appendLog("Waste counters reset: ${counters.joinToString { "${it.name}=${it.percentage}%" }}")
+                val counters = printerService.writeWasteCounters(current, selectedCounterNames, targetPercentage)
+                appendLog("Waste counters written: ${counters.joinToString { "${it.name}=${it.percentage}%" }}")
                 _uiState.value = _uiState.value.copy(
-                    resetSuccessMessage = "Waste ink counters have been reset. Restart the printer if required by the model.",
+                    resetSuccessMessage = "Waste ink counters have been updated. Restart the printer if required by the model.",
                 )
                 refreshStatus()
             }
