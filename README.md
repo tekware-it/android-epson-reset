@@ -14,7 +14,7 @@
 
 Android port of [`ez-reset`](https://github.com/CiRIP/ez-reset) for Epson printer maintenance over USB OTG.
 
-This app is aimed at Epson inkjet printers that expose the same service protocol used by `ez-reset`. It can detect supported Epson USB devices, open the control channel, read printer status, inspect waste ink counters, and issue waste counter reset commands directly from an Android device.
+This app is aimed at Epson inkjet printers that expose the same service protocol used by `ez-reset`. It can detect supported Epson USB devices, open the control channel, read printer status, inspect waste ink counters, issue waste counter write/reset commands, and send maintenance jobs such as nozzle check and head cleaning directly from an Android device.
 
 ## What It Does
 
@@ -23,7 +23,10 @@ This app is aimed at Epson inkjet printers that expose the same service protocol
 - Enters Epson IEEE 1284.4 / D4 mode and opens the `EPSON-CTRL` channel
 - Reads printer status, including ink levels when exposed by the printer
 - Reads waste ink counters from EEPROM
-- Resets waste ink counters using model-specific reset values
+- Writes or resets waste ink counters using model-specific reset values
+- Runs model-dependent head cleaning commands over Epson service protocol where supported
+- Falls back to USB ESC/P2 maintenance jobs for head cleaning on models that reject service cleaning
+- Prints nozzle check patterns over USB
 - Shows a compact status monitor UI inspired by `ez-reset`
 - Includes an in-app protocol log for debugging USB / D4 traffic
 
@@ -31,7 +34,7 @@ This app is aimed at Epson inkjet printers that expose the same service protocol
 
 - `Ink Levels` panel with adaptive single-row gauges for 4 to 8 inks
 - `Waste Levels` panel with dynamic counter rows
-- `Refresh`, `Reset All`, `About`, and protocol log copy actions
+- `Refresh`, `Write Counters`, `Head Cleaning`, `Nozzle Check`, `About`, and protocol log copy actions
 - Exit confirmation on Android back press
 
 ## Technical Notes
@@ -40,7 +43,7 @@ This app is aimed at Epson inkjet printers that expose the same service protocol
 - Language: Kotlin
 - UI: Jetpack Compose
 - USB stack: `UsbManager`, `UsbDeviceConnection`, bulk endpoints, printer-class control requests
-- Protocol: Epson `st` / `||` commands over D4 / IEEE 1284.4
+- Protocol: Epson `st` / `||` commands over D4 / IEEE 1284.4, plus USB ESC/P2 maintenance print jobs where needed
 - Model database: bundled `devices.xml` derived from the upstream `ez-reset` project
 
 ## Project Structure
@@ -74,14 +77,17 @@ Key identifiers:
 2. Grant USB permission when Android asks.
 3. Open the app.
 4. Tap `Refresh` to read printer status.
-5. Review waste counter values.
-6. Tap `Reset All` only if you understand the maintenance implications.
+5. Review ink and waste counter values.
+6. Use `Write Counters` only if you understand the maintenance implications.
+7. Use `Head Cleaning` or `Nozzle Check` for supported maintenance operations.
 
 ## Warning
 
-Resetting waste ink counters changes internal printer maintenance values.
+Resetting or writing waste ink counters changes internal printer maintenance values.
 
-It does **not** replace the physical waste ink pads or maintenance tank. Use it only if you understand the hardware implications and accept the risk.
+Head cleaning consumes ink and increases waste ink accumulation.
+
+Waste counter reset does **not** replace the physical waste ink pads or maintenance tank. Use maintenance functions only if you understand the hardware implications and accept the risk.
 
 ## Status
 
@@ -90,7 +96,7 @@ This is a working port in progress, not a finished production tool.
 Known realities:
 
 - USB behavior can vary between Epson models
-- Some models may need further D4 timing / transport tuning
+- Some models need different maintenance paths for status/reset versus cleaning/nozzle jobs
 - Hardware validation is still essential before trusting resets on a new model
 
 ## Upstream Basis
