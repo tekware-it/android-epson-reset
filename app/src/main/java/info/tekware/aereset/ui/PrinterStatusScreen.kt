@@ -116,11 +116,20 @@ fun PrinterStatusScreen(
             Panel("Waste Levels") {
                 WasteLevelsPanel(
                     counters = uiState.status?.wasteCounters.orEmpty(),
+                    connected = uiState.status != null,
+                    busy = uiState.isBusy,
+                    onReset = { showWarning = true },
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            Panel("Maintenance") {
+                MaintenancePanel(
                     cleaningOptions = cleaningOptions,
                     supportsGenericMaintenanceJobs = uiState.supportsGenericMaintenanceJobs,
                     connected = uiState.status != null,
                     busy = uiState.isBusy,
-                    onReset = { showWarning = true },
                     onClean = {
                         if (cleaningOptions.isNotEmpty()) {
                             showServiceCleaningDialog = true
@@ -670,13 +679,9 @@ private fun VerticalInkGauge(
 @Composable
 private fun WasteLevelsPanel(
     counters: List<WasteCounterStatus>,
-    cleaningOptions: List<String>,
-    supportsGenericMaintenanceJobs: Boolean,
     connected: Boolean,
     busy: Boolean,
     onReset: () -> Unit,
-    onClean: () -> Unit,
-    onNozzleCheck: () -> Unit,
 ) {
     val displayCounters = if (counters.isEmpty()) {
         listOf(
@@ -705,20 +710,32 @@ private fun WasteLevelsPanel(
             onClick = onReset,
             modifier = Modifier.fillMaxWidth(),
         )
-        if (cleaningOptions.isNotEmpty() || supportsGenericMaintenanceJobs) {
-            ClassicButton(
-                text = "Head Cleaning",
-                enabled = connected && !busy,
-                onClick = onClean,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            ClassicButton(
-                text = "Nozzle Check",
-                enabled = connected && !busy,
-                onClick = onNozzleCheck,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
+    }
+}
+
+@Composable
+private fun MaintenancePanel(
+    cleaningOptions: List<String>,
+    supportsGenericMaintenanceJobs: Boolean,
+    connected: Boolean,
+    busy: Boolean,
+    onClean: () -> Unit,
+    onNozzleCheck: () -> Unit,
+) {
+    val enabled = connected && !busy
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ClassicButton(
+            text = "Head Cleaning",
+            enabled = enabled && (cleaningOptions.isNotEmpty() || supportsGenericMaintenanceJobs),
+            onClick = onClean,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        ClassicButton(
+            text = "Nozzle Check",
+            enabled = enabled && supportsGenericMaintenanceJobs,
+            onClick = onNozzleCheck,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
