@@ -112,6 +112,8 @@ class EpsonProtocol(private val spec: PrinterSpec) {
         return buildFactoryCommand(0x42, payload)
     }
 
+    fun buildCleaningCommand(payload: ByteArray): ByteArray = buildFactoryCommand(0x84, payload)
+
     fun buildFactoryCommand(action: Int, payload: ByteArray = byteArrayOf()): ByteArray {
         val inverted = action xor 0xFF
         val rotated = ((action shr 1) and 0x7F) or ((action shl 7) and 0x80)

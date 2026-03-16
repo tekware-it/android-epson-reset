@@ -116,6 +116,12 @@ class UsbTransport(private val context: Context) {
         openOnInterface(device, usbInterface, permissionAlreadyGranted = true)
     }
 
+    suspend fun openPrintSession(device: UsbDevice): Session = withContext(Dispatchers.IO) {
+        require(ensurePermission(device)) { "USB permission denied" }
+        val usbInterface = findPrintInterface(device) ?: error("Printer bulk OUT interface not found")
+        openOnInterface(device, usbInterface, permissionAlreadyGranted = true)
+    }
+
     suspend fun openOnInterface(
         device: UsbDevice,
         usbInterface: UsbInterface,
@@ -201,6 +207,32 @@ class UsbTransport(private val context: Context) {
 
     fun rememberPreferredInterface(device: UsbDevice, interfaceId: Int) {
         preferredInterfaceByDeviceKey[deviceKey(device)] = interfaceId
+    }
+
+    fun findPrintInterface(device: UsbDevice): UsbInterface? {
+        val candidates = buildList {
+            for (index in 0 until device.interfaceCount) {
+                val usbInterface = device.getInterface(index)
+                val hasBulkOut = (0 until usbInterface.endpointCount).any { endpointIndex ->
+                    val endpoint = usbInterface.getEndpoint(endpointIndex)
+                    endpoint.type == UsbConstants.USB_ENDPOINT_XFER_BULK &&
+                        endpoint.direction == UsbConstants.USB_DIR_OUT
+                }
+                if (hasBulkOut) {
+                    add(usbInterface)
+                }
+            }
+        }
+
+        return candidates.minWithOrNull(
+            compareBy<UsbInterface> {
+                when {
+                    it.interfaceClass == UsbConstants.USB_CLASS_PRINTER -> 0
+                    it.interfaceClass == UsbConstants.USB_CLASS_VENDOR_SPEC -> 1
+                    else -> 2
+                }
+            }.thenBy { it.id },
+        )
     }
 
     fun getDeviceId(session: Session, timeoutMs: Int = 2000): String {

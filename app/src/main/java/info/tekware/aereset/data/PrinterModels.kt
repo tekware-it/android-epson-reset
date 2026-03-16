@@ -12,12 +12,19 @@ data class WasteCounterSpec(
     val max: Int,
 )
 
+data class CleaningSpec(
+    val name: String,
+    val type: String,
+    val payload: ByteArray,
+)
+
 data class PrinterSpec(
     val modelName: String,
     val controlModel: ByteArray,
     val keyword: ByteArray,
     val wasteCounters: List<WasteCounterSpec>,
     val resetMap: Map<Int, Int>,
+    val cleaningOptions: List<CleaningSpec>,
 )
 
 object EpsonPrinterCatalog {
@@ -89,6 +96,8 @@ object EpsonPrinterCatalog {
             var keyword = byteArrayOf()
             val wasteCounters = mutableListOf<WasteCounterSpec>()
             val resetMap = linkedMapOf<Int, Int>()
+            var cleaningOptions: List<CleaningSpec> = emptyList()
+            var cleaningDeclared = false
 
             specNames.forEach { specName ->
                 val specNode = specByName[specName] ?: return@forEach
@@ -143,6 +152,28 @@ object EpsonPrinterCatalog {
                         }
                     }
                 }
+
+                specNode.firstChildElement("cleaning")?.let { cleaningRoot ->
+                    if (!cleaningDeclared) {
+                        cleaningDeclared = true
+                        val parsedCleanings = cleaningRoot.childElements("cleaning").mapNotNull { cleaning ->
+                            val type = cleaning.firstChildElement("type")?.textContent?.trim().orEmpty()
+                            val payloadText = cleaning.firstChildElement("data")?.textContent?.trim().orEmpty()
+                            val payload = parseHexBytes(payloadText)
+                            if (type.equals("service", ignoreCase = true) && payload.isNotEmpty()) {
+                                val name = cleaning.firstChildElement("name")?.textContent?.trim().orEmpty()
+                                CleaningSpec(
+                                    name = name.ifBlank { "Head Cleaning" },
+                                    type = type,
+                                    payload = payload,
+                                )
+                            } else {
+                                null
+                            }
+                        }
+                        cleaningOptions = parsedCleanings
+                    }
+                }
             }
 
             if (controlModel.isNotEmpty() && keyword.isNotEmpty() && wasteCounters.isNotEmpty() && resetMap.isNotEmpty()) {
@@ -152,6 +183,7 @@ object EpsonPrinterCatalog {
                     keyword = keyword,
                     wasteCounters = wasteCounters.distinctBy { it.name to it.addresses },
                     resetMap = resetMap,
+                    cleaningOptions = cleaningOptions.distinctBy { it.name to it.payload.contentHashCode() },
                 )
             }
         }

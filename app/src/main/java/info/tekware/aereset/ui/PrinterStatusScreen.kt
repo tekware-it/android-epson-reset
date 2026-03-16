@@ -61,19 +61,32 @@ fun PrinterStatusScreen(
     onConnect: () -> Unit,
     onRefresh: () -> Unit,
     onReset: (Set<String>, Int) -> Unit,
-    onDismissResetSuccess: () -> Unit,
+    onServiceClean: (String) -> Unit,
+    onGenericClean: (Int, Boolean, Boolean) -> Unit,
+    onNozzleCheck: (Int) -> Unit,
+    onDismissActionSuccess: () -> Unit,
 ) {
     val context = LocalContext.current
     var showWarning by remember { mutableStateOf(false) }
+    var showServiceCleaningDialog by remember { mutableStateOf(false) }
+    var showGenericCleaningDialog by remember { mutableStateOf(false) }
+    var showNozzleCheckDialog by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
     var showExitDialog by remember { mutableStateOf(false) }
     val availableCounters = uiState.status?.wasteCounters.orEmpty()
+    val cleaningOptions = uiState.cleaningOptions
     var selectedCounters by remember(availableCounters) {
         mutableStateOf(availableCounters.map { it.name }.toSet())
     }
+    var selectedCleaning by remember(cleaningOptions) {
+        mutableStateOf(cleaningOptions.firstOrNull().orEmpty())
+    }
+    var selectedNozzleCheckType by remember { mutableStateOf(0) }
+    var genericCleaningGroup by remember { mutableStateOf(0) }
+    var genericPowerClean by remember { mutableStateOf(false) }
     var targetPercentageText by remember { mutableStateOf("0") }
 
-    BackHandler(enabled = !showWarning && !showAbout && !showExitDialog) {
+    BackHandler(enabled = !showWarning && !showServiceCleaningDialog && !showGenericCleaningDialog && !showNozzleCheckDialog && !showAbout && !showExitDialog) {
         showExitDialog = true
     }
 
@@ -103,9 +116,19 @@ fun PrinterStatusScreen(
             Panel("Waste Levels") {
                 WasteLevelsPanel(
                     counters = uiState.status?.wasteCounters.orEmpty(),
+                    cleaningOptions = cleaningOptions,
+                    supportsGenericMaintenanceJobs = uiState.supportsGenericMaintenanceJobs,
                     connected = uiState.status != null,
                     busy = uiState.isBusy,
                     onReset = { showWarning = true },
+                    onClean = {
+                        if (cleaningOptions.isNotEmpty()) {
+                            showServiceCleaningDialog = true
+                        } else {
+                            showGenericCleaningDialog = true
+                        }
+                    },
+                    onNozzleCheck = { showNozzleCheckDialog = true },
                 )
             }
 
@@ -207,6 +230,155 @@ fun PrinterStatusScreen(
         )
     }
 
+    if (showServiceCleaningDialog) {
+        AlertDialog(
+            onDismissRequest = { showServiceCleaningDialog = false },
+            title = { Text("Head cleaning") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showServiceCleaningDialog = false
+                        onServiceClean(selectedCleaning)
+                    },
+                    enabled = selectedCleaning.isNotBlank(),
+                ) {
+                    Text("Start Cleaning")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showServiceCleaningDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Head cleaning consumes ink. Choose the cleaning level supported by this printer.")
+                    cleaningOptions.forEach { option ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(option, color = Color.Black)
+                            Checkbox(
+                                checked = option == selectedCleaning,
+                                onCheckedChange = { checked ->
+                                    if (checked) {
+                                        selectedCleaning = option
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+            },
+        )
+    }
+
+    if (showGenericCleaningDialog) {
+        val cleaningModes = listOf(
+            "Clean all nozzles",
+            "Clean the black ink nozzle",
+            "Clean the color ink nozzles",
+            "Head cleaning (alternative mode)",
+        )
+        AlertDialog(
+            onDismissRequest = { showGenericCleaningDialog = false },
+            title = { Text("Head cleaning") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showGenericCleaningDialog = false
+                        onGenericClean(genericCleaningGroup, genericPowerClean, genericCleaningGroup == 3)
+                    },
+                ) {
+                    Text("Start Cleaning")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showGenericCleaningDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("This mode sends a generic Epson ESC/P2 maintenance job. Support may vary by model.")
+                    cleaningModes.forEachIndexed { index, label ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(label, color = Color.Black)
+                            Checkbox(
+                                checked = genericCleaningGroup == index,
+                                onCheckedChange = { checked ->
+                                    if (checked) {
+                                        genericCleaningGroup = index
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("Power Clean", color = Color.Black)
+                        Checkbox(
+                            checked = genericPowerClean,
+                            onCheckedChange = { genericPowerClean = it },
+                        )
+                    }
+                }
+            },
+        )
+    }
+
+    if (showNozzleCheckDialog) {
+        AlertDialog(
+            onDismissRequest = { showNozzleCheckDialog = false },
+            title = { Text("Nozzle check") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showNozzleCheckDialog = false
+                        onNozzleCheck(selectedNozzleCheckType)
+                    },
+                ) {
+                    Text("Print Test")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showNozzleCheckDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("Standard nozzle test", "Alternative nozzle test").forEachIndexed { index, label ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(label, color = Color.Black)
+                            Checkbox(
+                                checked = selectedNozzleCheckType == index,
+                                onCheckedChange = { checked ->
+                                    if (checked) {
+                                        selectedNozzleCheckType = index
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+            },
+        )
+    }
+
     if (showAbout) {
         AlertDialog(
             onDismissRequest = { showAbout = false },
@@ -263,10 +435,10 @@ fun PrinterStatusScreen(
         )
     }
 
-    uiState.resetSuccessMessage?.let { message ->
+    uiState.actionSuccessMessage?.let { message ->
         AlertDialog(
-            onDismissRequest = onDismissResetSuccess,
-            title = { Text("Reset completed") },
+            onDismissRequest = onDismissActionSuccess,
+            title = { Text("Operation completed") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(message)
@@ -286,7 +458,7 @@ fun PrinterStatusScreen(
                 }
             },
             confirmButton = {
-                Button(onClick = onDismissResetSuccess) {
+                Button(onClick = onDismissActionSuccess) {
                     Text("OK")
                 }
             },
@@ -498,9 +670,13 @@ private fun VerticalInkGauge(
 @Composable
 private fun WasteLevelsPanel(
     counters: List<WasteCounterStatus>,
+    cleaningOptions: List<String>,
+    supportsGenericMaintenanceJobs: Boolean,
     connected: Boolean,
     busy: Boolean,
     onReset: () -> Unit,
+    onClean: () -> Unit,
+    onNozzleCheck: () -> Unit,
 ) {
     val displayCounters = if (counters.isEmpty()) {
         listOf(
@@ -529,6 +705,20 @@ private fun WasteLevelsPanel(
             onClick = onReset,
             modifier = Modifier.fillMaxWidth(),
         )
+        if (cleaningOptions.isNotEmpty() || supportsGenericMaintenanceJobs) {
+            ClassicButton(
+                text = "Head Cleaning",
+                enabled = connected && !busy,
+                onClick = onClean,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            ClassicButton(
+                text = "Nozzle Check",
+                enabled = connected && !busy,
+                onClick = onNozzleCheck,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 

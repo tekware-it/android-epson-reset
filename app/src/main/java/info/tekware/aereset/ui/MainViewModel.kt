@@ -14,10 +14,12 @@ import kotlinx.coroutines.launch
 data class MainUiState(
     val connectedDeviceName: String? = null,
     val status: PrinterStatusSnapshot? = null,
+    val cleaningOptions: List<String> = emptyList(),
+    val supportsGenericMaintenanceJobs: Boolean = false,
     val isBusy: Boolean = false,
     val error: String? = null,
     val logs: List<String> = emptyList(),
-    val resetSuccessMessage: String? = null,
+    val actionSuccessMessage: String? = null,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -59,6 +61,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.value = _uiState.value.copy(
                     connectedDeviceName = current.deviceId,
                     status = status,
+                    cleaningOptions = current.spec.cleaningOptions.map { it.name },
+                    supportsGenericMaintenanceJobs = true,
                     error = null,
                 )
                 appendLog("Status read: ${status.state}, ${status.error}")
@@ -76,15 +80,64 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val counters = printerService.writeWasteCounters(current, selectedCounterNames, targetPercentage)
                 appendLog("Waste counters written: ${counters.joinToString { "${it.name}=${it.percentage}%" }}")
                 _uiState.value = _uiState.value.copy(
-                    resetSuccessMessage = "Waste ink counters have been updated. Restart the printer if required by the model.",
+                    actionSuccessMessage = "Waste ink counters have been updated. Restart the printer if required by the model.",
                 )
                 refreshStatus()
             }
         }
     }
 
-    fun dismissResetSuccess() {
-        _uiState.value = _uiState.value.copy(resetSuccessMessage = null)
+    fun runHeadCleaning(cleaningName: String) {
+        val current = connection ?: run {
+            appendError("Printer is not connected")
+            return
+        }
+        viewModelScope.launch {
+            runJob("Starting head cleaning") {
+                printerService.runHeadCleaning(current, cleaningName)
+                _uiState.value = _uiState.value.copy(
+                    actionSuccessMessage = "Head cleaning '${cleaningName}' command has been sent. Wait for the printer to start the routine, then refresh status manually.",
+                )
+            }
+        }
+    }
+
+    fun runGenericHeadCleaning(
+        groupIndex: Int,
+        powerClean: Boolean,
+        alternativeMode: Boolean,
+    ) {
+        val current = connection ?: run {
+            appendError("Printer is not connected")
+            return
+        }
+        viewModelScope.launch {
+            runJob("Starting head cleaning") {
+                printerService.runPrintJobHeadCleaning(current, groupIndex, powerClean, alternativeMode)
+                _uiState.value = _uiState.value.copy(
+                    actionSuccessMessage = "Head cleaning job has been sent. Wait for the printer to start the routine, then refresh status manually.",
+                )
+            }
+        }
+    }
+
+    fun printNozzleCheck(type: Int) {
+        val current = connection ?: run {
+            appendError("Printer is not connected")
+            return
+        }
+        viewModelScope.launch {
+            runJob("Printing nozzle check") {
+                printerService.printNozzleCheck(current, type)
+                _uiState.value = _uiState.value.copy(
+                    actionSuccessMessage = "Nozzle check print job has been sent. Wait for the page to print.",
+                )
+            }
+        }
+    }
+
+    fun dismissActionSuccess() {
+        _uiState.value = _uiState.value.copy(actionSuccessMessage = null)
     }
 
     override fun onCleared() {

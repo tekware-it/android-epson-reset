@@ -37,7 +37,10 @@ class MainActivity : ComponentActivity() {
                     onConnect = viewModel::discoverAndConnect,
                     onRefresh = viewModel::refreshStatus,
                     onReset = viewModel::resetWasteCounters,
-                    onDismissResetSuccess = viewModel::dismissResetSuccess,
+                    onServiceClean = viewModel::runHeadCleaning,
+                    onGenericClean = viewModel::runGenericHeadCleaning,
+                    onNozzleCheck = viewModel::printNozzleCheck,
+                    onDismissActionSuccess = viewModel::dismissActionSuccess,
                 )
             }
         }

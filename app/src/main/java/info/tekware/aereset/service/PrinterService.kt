@@ -1,12 +1,15 @@
 package info.tekware.aereset.service
 
-import android.content.Context
 import android.hardware.usb.UsbDevice
+import android.content.Context
+import android.hardware.usb.UsbConstants
 import info.tekware.aereset.data.EpsonPrinterCatalog
+import info.tekware.aereset.data.CleaningSpec
 import info.tekware.aereset.data.PrinterSpec
 import info.tekware.aereset.data.PrinterStatusSnapshot
 import info.tekware.aereset.data.WasteCounterStatus
 import info.tekware.aereset.data.WasteCounterSpec
+import info.tekware.aereset.protocol.Escp2MaintenanceProtocol
 import info.tekware.aereset.protocol.EpsonProtocol
 import info.tekware.aereset.usb.UsbTransport
 import kotlinx.coroutines.Dispatchers
@@ -136,6 +139,65 @@ class PrinterService(
         readPrinterStatus(connection).wasteCounters
     }
 
+    suspend fun runHeadCleaning(
+        connection: ConnectionState,
+        cleaningName: String,
+    ): ByteArray = withContext(Dispatchers.IO) {
+        val cleaning = connection.spec.cleaningOptions.firstOrNull { it.name == cleaningName }
+            ?: error("Unsupported cleaning mode: $cleaningName")
+        require(cleaning.type.equals("service", ignoreCase = true)) {
+            "Cleaning mode '${cleaning.name}' is not supported over USB D4"
+        }
+        log(
+            "Starting head cleaning '${cleaning.name}' payload=${
+                cleaning.payload.joinToString(" ") { "%02X".format(it) }
+            }",
+        )
+        val reply = sendControlPayload(connection, connection.protocol.buildCleaningCommand(cleaning.payload))
+        log("Head cleaning reply: ${reply.joinToString(" ") { "%02X".format(it) }}")
+        if (isNegativeMaintenanceReply(reply)) {
+            val fallbackGroup = genericCleaningGroup(cleaning)
+            if (fallbackGroup != null) {
+                log("Service cleaning '${cleaning.name}' was rejected, falling back to ESC/P2 cleaning group=$fallbackGroup")
+                runPrintJobHeadCleaning(
+                    connection = connection,
+                    groupIndex = fallbackGroup,
+                    powerClean = false,
+                    alternativeMode = false,
+                )
+            } else {
+                error("Printer rejected cleaning mode '${cleaning.name}'")
+            }
+        }
+        reply
+    }
+
+    suspend fun runPrintJobHeadCleaning(
+        connection: ConnectionState,
+        groupIndex: Int,
+        powerClean: Boolean,
+        alternativeMode: Boolean,
+    ) = withContext(Dispatchers.IO) {
+        val payload = Escp2MaintenanceProtocol.buildHeadCleaningJob(
+            groupIndex = groupIndex,
+            powerClean = powerClean,
+            alternativeMode = alternativeMode,
+        )
+        log(
+            "Starting ESC/P2 head cleaning group=$groupIndex powerClean=$powerClean alternativeMode=$alternativeMode bytes=${payload.size}",
+        )
+        sendPrintJob(connection, payload)
+    }
+
+    suspend fun printNozzleCheck(
+        connection: ConnectionState,
+        type: Int,
+    ) = withContext(Dispatchers.IO) {
+        val payload = Escp2MaintenanceProtocol.buildNozzleCheckJob(type)
+        log("Printing nozzle check type=$type bytes=${payload.size}")
+        sendPrintJob(connection, payload)
+    }
+
     fun close(connection: ConnectionState) {
         runCatching {
             val channel = connection.controlChannel ?: return@runCatching
@@ -166,7 +228,10 @@ class PrinterService(
             log("IEEE1284 device ID: $deviceId")
             val spec = EpsonPrinterCatalog.resolve(appContext, deviceId)
                 ?: error("Unsupported Epson model: $deviceId")
-            log("Resolved model spec: ${spec.modelName}, counters=${spec.wasteCounters.size}, resetEntries=${spec.resetMap.size}")
+            log(
+                "Resolved model spec: ${spec.modelName}, counters=${spec.wasteCounters.size}, " +
+                    "resetEntries=${spec.resetMap.size}, cleanings=${spec.cleaningOptions.size}",
+            )
             val protocol = EpsonProtocol(spec)
 
             val enterReply = enterDot4(session, protocol)
@@ -235,6 +300,40 @@ class PrinterService(
             log("1284.4 enter reply shorter than expected (${enterReply.size}/8)")
         }
         return enterReply
+    }
+
+    private suspend fun sendPrintJob(connection: ConnectionState, payload: ByteArray) {
+        val currentSession = connection.session
+        val currentIsPrinterInterface = currentSession.usbInterface.interfaceClass == UsbConstants.USB_CLASS_PRINTER
+        if (currentIsPrinterInterface && currentSession.bulkOut != null) {
+            transport.bulkWrite(currentSession, payload, timeoutMs = 6000)
+            log("Print job sent on current interface ${currentSession.usbInterface.id}")
+            return
+        }
+
+        val printSession = transport.openPrintSession(currentSession.device)
+        try {
+            log("Print job session opened on interface ${printSession.usbInterface.id}")
+            transport.bulkWrite(printSession, payload, timeoutMs = 6000)
+            log("Print job sent on printer interface ${printSession.usbInterface.id}")
+        } finally {
+            printSession.close()
+        }
+    }
+
+    private fun isNegativeMaintenanceReply(reply: ByteArray): Boolean {
+        val ascii = reply.decodeToString()
+        return ascii.contains(":NA;")
+    }
+
+    private fun genericCleaningGroup(cleaning: CleaningSpec): Int? {
+        val name = cleaning.name.uppercase()
+        return when {
+            name.startsWith("ALL") -> 0
+            name.startsWith("BLK") || name.contains("BLACK") -> 1
+            name.startsWith("YMC") || name.contains("COLOR") || name.contains("COLOUR") -> 2
+            else -> null
+        }
     }
 
     private fun sendControlPayload(connection: ConnectionState, payload: ByteArray): ByteArray {
